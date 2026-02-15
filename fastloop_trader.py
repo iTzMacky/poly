@@ -238,27 +238,30 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
 
 
 def _parse_fast_market_end_time(question):
-    """Parse end time from fast market question.
-    e.g., 'Bitcoin Up or Down - February 15, 5:30AM-5:35AM ET' → datetime
-    """
     import re
-    # Match pattern: "Month Day, StartTime-EndTime ET"
-    pattern = r'(\w+ \d+),.*?-\s*(\d{1,2}:\d{2}(?:AM|PM))\s*ET'
-    match = re.search(pattern, question)
-    if not match:
-        return None
-    try:
-        date_str = match.group(1)
-        time_str = match.group(2)
-        year = datetime.now(timezone.utc).year
-        dt_str = f"{date_str} {year} {time_str}"
-        # Parse as ET (UTC-5)
-        dt = datetime.strptime(dt_str, "%B %d %Y %I:%M%p")
-        # Convert ET to UTC (+5 hours)
-        dt = dt.replace(tzinfo=timezone.utc) + timedelta(hours=5)
-        return dt
-    except Exception:
-        return None
+    from dateutil import parser  # Add to requirements.txt if needed: python-dateutil
+
+    # Broader patterns
+    patterns = [
+        r'(\w+ \d+)[,;]?\s*(?:.*?-)?\s*(\d{1,2}:\d{2}(?:AM|PM)?)\s*(?:-\s*\d{1,2}:\d{2}(?:AM|PM)?)?\s*ET',
+        r'(\w+ \d+,\s*\d{4})?\s*.*?(\d{1,2}:\d{2}[AP]M?)\s*ET',  # Fallback
+    ]
+    for pat in patterns:
+        match = re.search(pat, question, re.IGNORECASE)
+        if match:
+            date_part = match.group(1) or datetime.now(timezone.utc).strftime("%B %d")
+            time_part = match.group(2)
+            try:
+                # Assume current year if missing
+                dt_str = f"{date_part} {datetime.now().year} {time_part} ET"
+                dt = parser.parse(dt_str, fuzzy=True)
+                # Convert ET to UTC: Feb is EST (-5), but use pytz for accuracy if add import
+                from datetime import timedelta
+                dt = dt.replace(tzinfo=timezone(timedelta(hours=-5)))  # EST
+                return dt.astimezone(timezone.utc)
+            except:
+                continue
+    return None
 
 
 def find_best_fast_market(markets):
