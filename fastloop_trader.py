@@ -516,9 +516,18 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
     # Step 1: Discover fast markets
     log(f"\n🔍 Discovering {ASSET} fast markets...")
     markets = discover_fast_market_markets(ASSET, WINDOW)
-    log("Discovered markets:")
-    for m in markets:
-        remaining = (m['end_time'] - datetime.now(timezone.utc)).total_seconds() if m['end_time'] else "N/A"
+    log(f"  Found {len(markets)} active fast markets")
+
+    # Debug: Log discovered markets (only if any)
+    if markets:
+        log("Discovered markets (showing first 5):")
+        for m in markets[:5]:  # Limit to avoid log spam
+            remaining = (m['end_time'] - datetime.now(timezone.utc)).total_seconds() if m.get('end_time') else "N/A (parse failed)"
+            slug = m.get('slug', 'N/A')
+            question = m.get('question', 'Unknown')
+            log(f" - {question} | Expires in ~{remaining}s | Slug: {slug}")
+    else:
+        log("No markets discovered - check API response or filters")
     log(f" - {m['question']} | Expires in ~{remaining}s | Slug: {m['slug']}")
     log(f"  Found {len(markets)} active fast markets")
 
