@@ -205,7 +205,6 @@ def simmer_request(path, method="GET", data=None, api_key=None):
 # =============================================================================
 
 def discover_fast_market_markets(asset="BTC", window="5m"):
-    """Find active fast markets on Polymarket via Gamma API."""
     patterns = ASSET_PATTERNS.get(asset, ASSET_PATTERNS["BTC"])
     url = (
         "https://gamma-api.polymarket.com/markets"
@@ -215,8 +214,7 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
     if not result or isinstance(result, dict) and result.get("error"):
         return []
 
-    today_str = datetime.now(timezone.utc).strftime("%B %d")
-    markets = [m for m in markets if today_str in m.get("question", "")]
+    markets = []
     for m in result:
         q = (m.get("question") or "").lower()
         slug = m.get("slug", "")
@@ -225,7 +223,6 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
             condition_id = m.get("conditionId", "")
             closed = m.get("closed", False)
             if not closed and slug:
-                # Parse end time from question (e.g., "5:30AM-5:35AM ET")
                 end_time = _parse_fast_market_end_time(m.get("question", ""))
                 markets.append({
                     "question": m.get("question", ""),
@@ -236,6 +233,11 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
                     "outcome_prices": m.get("outcomePrices", "[]"),
                     "fee_rate_bps": int(m.get("fee_rate_bps") or m.get("feeRateBps") or 0),
                 })
+
+    # NOW filter here, after markets is populated
+    today_str = datetime.now(timezone.utc).strftime("%B %d")  # e.g., "February 15"
+    markets = [m for m in markets if today_str in m.get("question", "")]
+
     return markets
 
 
