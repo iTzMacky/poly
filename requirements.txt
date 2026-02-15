@@ -1,1 +1,3 @@
-
+requests>=2.31.0
+ccxt>=4.3.0           # Covers Binance klines reliably if the script imports it
+python-dotenv>=1.0.1  # Helpful for local testing
