@@ -20,6 +20,7 @@ import sys
 import json
 import math
 import argparse
+import time
 from datetime import datetime, timezone, timedelta
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
@@ -214,7 +215,8 @@ def discover_fast_market_markets(asset="BTC", window="5m"):
     if not result or isinstance(result, dict) and result.get("error"):
         return []
 
-    markets = []
+    today_str = datetime.now(timezone.utc).strftime("%B %d")
+    markets = [m for m in markets if today_str in m.get("question", "")]
     for m in result:
         q = (m.get("question") or "").lower()
         slug = m.get("slug", "")
@@ -330,28 +332,25 @@ def get_binance_momentum(symbol="BTCUSDT", lookback_minutes=5):
     except (IndexError, ValueError, KeyError):
         return None
 
-
 def get_coingecko_momentum(asset="bitcoin", lookback_minutes=5):
-    """Fallback: get price from CoinGecko (less accurate, ~1-2 min lag)."""
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={asset}&vs_currencies=usd"
-    result = _api_request(url)
-    if not result or isinstance(result, dict) and result.get("error"):
-        return None
-    price_now = result.get(asset, {}).get("usd")
-    if not price_now:
-        return None
-    # CoinGecko doesn't give candle data on free tier, so just return current price
-    # Agent would need to track history across calls for momentum
-    return {
-        "momentum_pct": 0,  # Can't calculate without history
-        "direction": "neutral",
-        "price_now": price_now,
-        "price_then": price_now,
-        "avg_volume": 0,
-        "latest_volume": 0,
-        "volume_ratio": 1.0,
-        "candles": 0,
-    }
+    for attempt in range(3):
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={asset}&vs_currencies=usd"
+        result = _api_request(url)
+        if result and not isinstance(result, dict) or "error" not in result:
+            price_now = result.get(asset, {}).get("usd")
+            if price_now:
+                return {
+                    "momentum_pct": 0,
+                    "direction": "neutral",
+                    "price_now": price_now,
+                    "price_then": price_now,
+                    "avg_volume": 0,
+                    "latest_volume": 0,
+                    "volume_ratio": 1.0,
+                    "candles": 0,
+                }
+        time.sleep(5)  # Backoff
+    return None
 
 
 COINGECKO_ASSETS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana"}
@@ -515,6 +514,10 @@ def run_fast_market_strategy(dry_run=True, positions_only=False, show_config=Fal
     # Step 1: Discover fast markets
     log(f"\n🔍 Discovering {ASSET} fast markets...")
     markets = discover_fast_market_markets(ASSET, WINDOW)
+    log("Discovered markets:")
+    for m in markets:
+        remaining = (m['end_time'] - datetime.now(timezone.utc)).total_seconds() if m['end_time'] else "N/A"
+    log(f" - {m['question']} | Expires in ~{remaining}s | Slug: {m['slug']}")
     log(f"  Found {len(markets)} active fast markets")
 
     if not markets:
