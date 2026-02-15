@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Simmer FastLoop Trading Skill - Fixed version
-
-Discovers Polymarket 5-minute BTC up/down markets, parses real expiry times,
-selects the soonest one available, and prepares for momentum-based trading.
+Simmer FastLoop Trading Skill – Closest active market selector (fixed)
 """
 
 import os
@@ -65,7 +62,7 @@ def simmer_request(path, method="GET", data=None):
     return _api_request(f"{SIMMER_BASE}{path}", method=method, data=data, headers=headers)
 
 # ────────────────────────────────────────────────
-# MARKET DISCOVERY & PARSING
+# MARKET DISCOVERY & PARSING – IMPROVED
 # ────────────────────────────────────────────────
 
 def discover_fast_market_markets():
@@ -99,30 +96,32 @@ def discover_fast_market_markets():
     return markets
 
 def parse_end_time(question, slug):
-    # Try to parse end time from question
-    # Example: "Bitcoin Up or Down - February 16, 9:05AM-9:10AM ET"
-    pattern = r'(\w+ \d+)[,;]?\s*(\d{1,2}(?::\d{2})?[AP]M?)\s*-\s*\d{1,2}(?::\d{2})?[AP]M?\s*ET'
+    # Improved regex for titles like "Bitcoin Up or Down - February 16, 9:05AM-9:10AM ET"
+    pattern = r'(\w+ \d+)[,;]?\s*(\d{1,2}(?::\d{2})?[AP]M?)\s*[-–]\s*\d{1,2}(?::\d{2})?[AP]M?\s*ET'
     match = re.search(pattern, question, re.IGNORECASE)
     if match:
         date_part = match.group(1)
         time_part = match.group(2)
         try:
-            dt_str = f"{date_part} {datetime.now().year} {time_part}"
+            dt_str = f"{date_part} {datetime.now().year} {time_part} ET"
             dt = parser.parse(dt_str, fuzzy=True, tzinfos={"ET": gettz("America/New_York")})
             return dt.astimezone(timezone.utc)
-        except:
-            pass
+        except Exception as e:
+            print(f"Question parse failed: {e}")
 
-    # Fallback: use slug timestamp (btc-updown-5m-1771250700 → start time, end = start + 5 min)
+    # Strong fallback: slug timestamp is usually start time → add 5 min
     slug_match = re.search(r'-(\d{10,})$', slug)
     if slug_match:
         try:
             unix_ts = int(slug_match.group(1))
             start_dt = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
-            return start_dt + timedelta(minutes=5)  # end time
-        except:
-            pass
+            end_dt = start_dt + timedelta(minutes=5)
+            # print(f"Slug fallback: {slug} → end {end_dt.isoformat()}")
+            return end_dt
+        except Exception as e:
+            print(f"Slug parse failed: {e}")
 
+    print(f"Could not parse end time for: {question} | {slug}")
     return None
 
 def select_soonest_market(markets):
@@ -131,16 +130,18 @@ def select_soonest_market(markets):
     for m in markets:
         end_time = m.get("end_time")
         if end_time:
-            remaining = (end_time - now).total_seconds()
-            if remaining > MIN_TIME_REMAINING:
-                candidates.append((remaining, m))
+            remaining_sec = (end_time - now).total_seconds()
+            if remaining_sec > MIN_TIME_REMAINING:
+                candidates.append((remaining_sec, m))
+
     if not candidates:
         return None
+
     candidates.sort(key=lambda x: x[0])  # smallest remaining first
     return candidates[0][1]
 
 # ────────────────────────────────────────────────
-# MAIN LOOP
+# MAIN CYCLE
 # ────────────────────────────────────────────────
 
 def run_cycle(dry_run=True):
@@ -152,7 +153,7 @@ def run_cycle(dry_run=True):
     print(f"\nConfiguration:")
     print(f"  Asset:            {ASSET}")
     print(f"  Window:           {WINDOW}")
-    print(f"  Signal source:    {SIGNAL_SOURCE}")
+    print(f"  Signal:           {SIGNAL_SOURCE}")
     print(f"  Min momentum:     {MIN_MOMENTUM_PCT}%")
     print(f"  Max position:     ${MAX_POSITION_USD:.2f}")
     print(f"  Min time left:    {MIN_TIME_REMAINING}s")
@@ -161,14 +162,17 @@ def run_cycle(dry_run=True):
     print(f"\nFound {len(markets)} active fast markets")
 
     if markets:
-        print("Discovered markets (first 5):")
+        print("\nDiscovered markets (showing first 5 – sorted by creation):")
         now = datetime.now(timezone.utc)
         for m in markets[:5]:
-            remaining = "N/A"
+            remaining_sec = "N/A"
             if m["end_time"]:
-                remaining = f"{(m['end_time'] - now).total_seconds():,.0f}s"
+                remaining_sec = (m["end_time"] - now).total_seconds()
+                remaining_str = f"{remaining_sec:,.0f}s  (~{remaining_sec/3600:.1f} hours)"
+            else:
+                remaining_str = "parse failed"
             print(f" - {m['question']}")
-            print(f"   Expires ~{remaining} | Slug: {m['slug']} | End ISO: {m.get('end_date_iso','N/A')}")
+            print(f"   Expires ~{remaining_str} | Slug: {m['slug']} | End ISO: {m.get('end_date_iso','N/A')}")
 
     if not markets:
         print("No suitable markets found.")
@@ -180,23 +184,21 @@ def run_cycle(dry_run=True):
         return
 
     remaining = (best["end_time"] - datetime.now(timezone.utc)).total_seconds()
-    print(f"\n🎯 Selected: {best['question']}")
-    print(f"  Expires in: {remaining:,.0f}s")
+    hours = remaining / 3600
+    print(f"\n🎯 Selected closest active market:")
+    print(f"   {best['question']}")
+    print(f"   Expires in: {remaining:,.0f}s  (~{hours:.1f} hours)")
+    print(f"   Slug: {best['slug']}")
 
-    if remaining > 43200:  # >12 hours
-        print("⚠️ This is a pre-created market for tomorrow. Liquidity may be very low until closer to start time.")
+    if remaining > 43200:  # > 12 hours
+        print("⚠️  This is a pre-created market for tomorrow.")
+        print("    Liquidity is usually very low until closer to the start time.")
 
-    # ────────────────────────────────────────────────
-    # Price signal (placeholder - expand with real logic)
-    # ────────────────────────────────────────────────
-    print("\n📈 Fetching price signal (coingecko)...")
-    # Here you would call get_coingecko_momentum() or binance
-    # For now just simulate
-    print("  Price: $69,420.00 (was $69,400.00)")
-    print("  Momentum: +0.029%")
-    print("  Direction: up")
-
-    print("\n🧠 Analyzing... (trading logic would go here)")
+    # Placeholder for next steps
+    print("\nNext steps would be:")
+    print("  1. Import market to Simmer")
+    print("  2. Fetch price momentum")
+    print("  3. Decide YES/NO trade")
 
     print("\n📊 Cycle complete")
 
